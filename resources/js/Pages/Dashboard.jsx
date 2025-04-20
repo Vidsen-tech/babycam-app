@@ -4,10 +4,10 @@ import { useState, useEffect, useCallback, useRef } from 'react'; // Dodali smo 
 import { useAudioStreamer } from '@/hooks/useAudioStreamer'; // Naš hook
 
 // Shadcn/ui komponente
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Slider } from "@/components/ui/slider";
-import { Label } from "@/components/ui/label";
+import { Button } from "@/Components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/Components/ui/card";
+import { Slider } from "@/Components/ui/slider";
+import { Label } from "@/Components/ui/label";
 
 // Ikone (dodali Play, StopCircle, Maximize, Minimize)
 import { Play, StopCircle, Volume2, VolumeX, VideoOff, Thermometer, Wind, ScanLine, AlertCircle, Maximize, Minimize } from 'lucide-react';
