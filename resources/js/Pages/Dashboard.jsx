@@ -2,7 +2,7 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { Head } from '@inertiajs/react';
 import { useState } from 'react';
-import { useAudioStreamer } from '@/Hooks/useAudioStreamer'; // Importaj naš novi hook
+import { useAudioStreamer } from '@/hooks/useAudioStreamer'; // Importaj naš novi hook
 
 export default function Dashboard({ auth }) {
     const [isCameraOn, setIsCameraOn] = useState(false);
