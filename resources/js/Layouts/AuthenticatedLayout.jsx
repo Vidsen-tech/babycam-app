@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from '@inertiajs/react';
 import { Sheet, SheetContent, SheetTrigger } from "@/Components/ui/sheet"; // Za mobilni meni (dodaj: npx shadcn@latest add sheet)
 import { Button } from "@/Components/ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"; // Za user dropdown (dodaj: npx shadcn@latest add dropdown-menu)
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/Components/ui/dropdown-menu"; // Za user dropdown (dodaj: npx shadcn@latest add dropdown-menu)
 
 // Ikone
 import { PanelLeft, LayoutDashboard, User, LogOut, Settings, Menu } from 'lucide-react'; // Dodaj ikone koje trebamo
