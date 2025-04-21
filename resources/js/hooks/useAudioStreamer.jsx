@@ -1,159 +1,145 @@
-// resources/js/Hooks/useAudioStreamer.jsx
-import { useState, useRef, useEffect, useCallback } from 'react';
+// resources/js/hooks/useAudioStreamer.jsx
+import { useState, useRef, useEffect, useCallback } from "react";
 
-export function useAudioStreamer(webSocketUrl) {
-    const [isAudioStreaming, setIsAudioStreaming] = useState(false);
-    const [error, setError] = useState(null);
+/**
+ * Hook for real‑time 16‑bit‑PCM mono streaming over WebSocket.
+ * Works on desktop Chrome/Firefox and iOS/Safari/Chrome‑iOS.
+ */
+export function useAudioStreamer(wsUrl) {
+    /* ---------- state ---------- */
+    const [isStreaming, setIsStreaming] = useState(false);
+    const [error, setError]         = useState(null);
 
-    const ws = useRef(null);
-    const audioContext = useRef(null);
-    const audioQueue = useRef([]);
-    const nextPlayTime = useRef(0);
-    const sampleRate = useRef(16000); // Default, ažurirat će se
-    const audioInfoReceived = useRef(false);
+    /* ---------- refs (mutable, survive re‑renders) ---------- */
+    const ws              = useRef(null);
+    const ctx             = useRef(null);            // AudioContext
+    const queue           = useRef([]);              // Float32Array[]
+    const nextPlayTime    = useRef(0);               // absolute (ctx.currentTime)
+    const serverRate      = useRef(48000);           // will be overwritten by handshake
+    const infoReceived    = useRef(false);
 
-    const processAudioQueue = useCallback(() => {
-        if (audioQueue.current.length === 0 || !audioContext.current || audioContext.current.state !== 'running') {
-            return;
+    /* ---------- helpers ---------- */
+
+    /** iOS Web‑Audio unlock */
+    const createCtx = () => {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        const c = new AudioCtx({ latencyHint: "interactive" });
+        // iOS: the synchronous user‑gesture has not finished yet,
+        // so resume() MUST be synchronous, no await here!
+        if (c.state === "suspended") c.resume();
+        return c;
+    };
+
+    /** copy samples into an AudioBuffer (with Safari fallback) */
+    const fillBuffer = (buffer, data) => {
+        if (buffer.copyToChannel) {
+            buffer.copyToChannel(data, 0);
+        } else {
+            // very old iOS
+            buffer.getChannelData(0).set(data);
         }
-        const currentTime = audioContext.current.currentTime;
-        if (nextPlayTime.current < currentTime) {
-            // console.log("AudioStreamer: Resetting nextPlayTime");
-            nextPlayTime.current = currentTime;
+    };
+
+    /** Naïve linear resampler (only when serverRate !== ctx.sampleRate) */
+    const resample = (int16) => {
+        const ratio     = serverRate.current / ctx.current.sampleRate;
+        const newLen    = Math.round(int16.length / ratio);
+        const out       = new Float32Array(newLen);
+        for (let i = 0; i < newLen; i++) {
+            out[i] = int16[Math.floor(i * ratio)] / 32768;
         }
+        return out;
+    };
 
-        const audioData = audioQueue.current.shift();
-        const audioBuffer = audioContext.current.createBuffer(1, audioData.length, sampleRate.current);
-        audioBuffer.copyToChannel(audioData, 0);
+    /** Schedules one buffer and queues the next */
+    const pump = useCallback(() => {
+        if (!queue.current.length || !ctx.current || ctx.current.state !== "running") return;
 
-        const sourceNode = audioContext.current.createBufferSource();
-        sourceNode.buffer = audioBuffer;
-        sourceNode.connect(audioContext.current.destination);
+        const data      = queue.current.shift();
+        const buffer    = ctx.current.createBuffer(1, data.length, ctx.current.sampleRate);
+        fillBuffer(buffer, data);
 
-        // console.log(`AudioStreamer: Scheduling play at: ${nextPlayTime.current.toFixed(3)} (duration: ${audioBuffer.duration.toFixed(3)})`);
-        sourceNode.start(nextPlayTime.current);
-        nextPlayTime.current += audioBuffer.duration;
+        if (nextPlayTime.current < ctx.current.currentTime)
+            nextPlayTime.current = ctx.current.currentTime;
 
-        if (audioQueue.current.length > 0) {
-            // Dinamičko čekanje bazirano na trajanju buffera i latenciji konteksta
-            const bufferDurationMillis = audioBuffer.duration * 1000;
-            // Zakaži malo prije kraja, ali ne prerano
-            const checkAheadMillis = Math.min(bufferDurationMillis / 2, 100);
-            setTimeout(processAudioQueue, Math.max(10, bufferDurationMillis - checkAheadMillis));
+        const src = ctx.current.createBufferSource();
+        src.buffer = buffer;
+        src.connect(ctx.current.destination);
+        src.start(nextPlayTime.current);
+
+        nextPlayTime.current += buffer.duration;
+
+        // schedule next pump a bit before this buffer ends
+        if (queue.current.length) {
+            const ahead = Math.max(buffer.duration * 500, 10);      // ms
+            setTimeout(pump, buffer.duration * 1000 - ahead);
         }
-    }, []); // useCallback s praznim dependency arrayom jer ne ovisi o vanjskim props/state
+    }, []);
 
-    const stopStreaming = useCallback(() => {
-        if (ws.current) {
-            console.log("AudioStreamer: Closing WebSocket connection...");
-            ws.current.onclose = null; // Ukloni handler da izbjegnemo rekurziju/duplo zatvaranje
-            ws.current.close();
-            ws.current = null;
-        }
-        if (audioContext.current && audioContext.current.state !== 'closed') {
-            console.log("AudioStreamer: Closing AudioContext...");
-            audioContext.current.close().then(() => console.log("AudioStreamer: AudioContext closed."));
-            audioContext.current = null;
-        }
-        setIsAudioStreaming(false);
-        setError(null);
-        audioQueue.current = [];
+    /* ---------- public API ---------- */
+
+    const stop = useCallback(() => {
+        ws.current?.close();
+        ws.current  = null;
+        ctx.current?.close();
+        ctx.current = null;
+        queue.current.length  = 0;
+        nextPlayTime.current  = 0;
+        infoReceived.current  = false;
+        setIsStreaming(false);
+    }, []);
+
+    const start = useCallback(() => {
+        if (!wsUrl || isStreaming) return;
+
+        /* 1. WebSocket ------------------------------------------------------- */
+        ws.current = new WebSocket(wsUrl);
+        ws.current.binaryType = "arraybuffer";
+
+        /* 2. AudioContext (created strictly inside the *same* click/tap) ---- */
+        ctx.current = createCtx();
         nextPlayTime.current = 0;
-        audioInfoReceived.current = false;
-    }, []); // useCallback osigurava da se funkcija ne rekreira nepotrebno
 
-    const startStreaming = useCallback(() => {
-        if (!webSocketUrl) {
-            console.error('AudioStreamer: WebSocket URL nije zadan.');
-            setError('WebSocket URL nije zadan.');
-            return;
-        }
+        /* 3. WebSocket event handlers -------------------------------------- */
+        ws.current.onopen = () => setIsStreaming(true);
 
-        if (ws.current || isAudioStreaming) {
-            console.log('AudioStreamer: Streaming već aktivan ili u procesu.');
-            return;
-        }
-
-        console.log(`AudioStreamer: Spajanje na ${webSocketUrl}...`);
-        setError(null); // Resetiraj greške
-        ws.current = new WebSocket(webSocketUrl);
-        ws.current.binaryType = 'arraybuffer';
-
-        if (!audioContext.current || audioContext.current.state === 'closed') {
-            audioContext.current = new AudioContext();
-            nextPlayTime.current = 0;
-            audioQueue.current = [];
-            audioInfoReceived.current = false;
-            console.log("AudioStreamer: AudioContext kreiran/resetiran.");
-        } else if (audioContext.current.state === 'suspended') {
-            audioContext.current.resume().then(() => console.log("AudioStreamer: AudioContext nastavljen."));
-        }
-
-        ws.current.onopen = () => {
-            console.log('AudioStreamer: WebSocket konekcija otvorena.');
-            setIsAudioStreaming(true);
-        };
-
-        ws.current.onmessage = (event) => {
-            if (!audioContext.current || audioContext.current.state === 'closed') return;
-
-            if (!audioInfoReceived.current && typeof event.data === 'string') {
+        ws.current.onmessage = (evt) => {
+            /* first message is JSON with audio info --------------------------- */
+            if (!infoReceived.current && typeof evt.data === "string") {
                 try {
-                    const info = JSON.parse(event.data);
-                    if (info.type === 'audio_info') {
-                        console.log("AudioStreamer: Primljene audio informacije:", info);
-                        sampleRate.current = info.sampleRate;
-                        audioInfoReceived.current = true;
-                        return;
+                    const info = JSON.parse(evt.data);
+                    if (info.type === "audio_info") {
+                        serverRate.current   = info.sampleRate;
+                        infoReceived.current = true;
                     }
-                } catch (e) {
-                    console.error("AudioStreamer: Nije uspjelo parsiranje JSON info poruke:", e);
-                }
+                } catch { /* ignore */ }
+                return;
             }
 
-            if (event.data instanceof ArrayBuffer && audioInfoReceived.current) {
-                const int16Array = new Int16Array(event.data);
-                const float32Array = new Float32Array(int16Array.length);
-                for (let i = 0; i < int16Array.length; i++) {
-                    float32Array[i] = int16Array[i] / 32768.0;
-                }
-                audioQueue.current.push(float32Array);
-                if (audioQueue.current.length === 1 && audioContext.current.state === 'running') {
-                    processAudioQueue();
-                }
-            }
+            /* afterwards we expect raw PCM ArrayBuffers ----------------------- */
+            if (!(evt.data instanceof ArrayBuffer) || !infoReceived.current) return;
+
+            const int16 = new Int16Array(evt.data);
+            const float32 =
+                serverRate.current === ctx.current.sampleRate
+                    ? Float32Array.from(int16, (s) => s / 32768)
+                    : resample(int16);
+
+            queue.current.push(float32);
+            if (queue.current.length === 1) pump();  // kick off pumping loop
         };
 
-        ws.current.onerror = (event) => {
-            console.error('AudioStreamer: WebSocket greška:', event);
-            setError('WebSocket greška. Provjerite konzolu.');
-            stopStreaming(); // Pozovi cleanup kod greške
+        ws.current.onerror = (e) => {
+            console.error("WS error:", e);
+            setError("WebSocket greška — pogledaj konzolu.");
+            stop();
         };
 
-        ws.current.onclose = (event) => {
-            console.log('AudioStreamer: WebSocket konekcija zatvorena.', event.code, event.reason);
-            // Resetiraj stanje samo ako nije već resetirano kroz stopStreaming
-            if(isAudioStreaming){
-                setIsAudioStreaming(false);
-                setError(`WebSocket konekcija zatvorena (code: ${event.code})`);
-                // Ne treba zatvarati ws.current ili audioContext ovdje jer je stopStreaming() glavni za cleanup
-                ws.current = null; // Osiguraj da je ref čist
-                if (audioContext.current && audioContext.current.state !== 'closed') {
-                    // Možda ne želimo zatvoriti context odmah? Ovisi o UX.
-                    // audioContext.current.close().then(() => console.log("AudioContext zatvoren zbog WS close."));
-                }
-            }
-        };
-    }, [webSocketUrl, isAudioStreaming, stopStreaming, processAudioQueue]); // Dependency array za useCallback
+        ws.current.onclose  = stop;
+    }, [wsUrl, isStreaming, pump, stop]);
 
-    // Cleanup Effect
-    useEffect(() => {
-        // Vrati funkciju koja će se izvršiti prilikom unmounta komponente koja KORISTI hook
-        return () => {
-            stopStreaming();
-        };
-    }, [stopStreaming]); // Ovisi o stabilnoj stopStreaming funkciji
+    /* ---------- cleanup when component unmounts ---------- */
+    useEffect(() => stop, [stop]);
 
-    // Vrati stanje i funkcije koje komponenta može koristiti
-    return { isAudioStreaming, error, startStreaming, stopStreaming };
+    return { isAudioStreaming: isStreaming, error, startStreaming: start, stopStreaming: stop };
 }
