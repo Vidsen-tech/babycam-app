@@ -1,7 +1,7 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { Head } from '@inertiajs/react';
-import { useState, useEffect, useCallback, useRef } from 'react'; // Dodali smo useRef
-import { useAudioStreamer } from '@/hooks/useAudioStreamer'; // Naš hook
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useAudioStreamer } from '@/hooks/useAudioStreamer';
 
 // Shadcn/ui komponente
 import { Button } from "@/Components/ui/button";
@@ -9,21 +9,18 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/Com
 import { Slider } from "@/Components/ui/slider";
 import { Label } from "@/Components/ui/label";
 
-// Ikone (dodali Play, StopCircle, Maximize, Minimize)
+// Ikone
 import { Play, StopCircle, Volume2, VolumeX, VideoOff, Thermometer, Wind, ScanLine, AlertCircle, Maximize, Minimize } from 'lucide-react';
 
 // Animacije
 import { motion, AnimatePresence } from 'framer-motion';
 
 export default function Dashboard({ auth }) {
-    // Glavno stanje za praćenje je li nadzor aktivan
     const [isMonitoringActive, setIsMonitoringActive] = useState(false);
     const [isMuted, setIsMuted] = useState(false);
     const [volume, setVolume] = useState([50]);
-    const [isFullscreen, setIsFullscreen] = useState(false); // Stanje za fullscreen
-
-    // Ref za video kontejner (za fullscreen)
-    const videoContainerRef = useRef(null);
+    const [isFullscreen, setIsFullscreen] = useState(false);
+    const videoContainerRef = useRef(null); // Ref za kontejner koji ide u fullscreen
 
     // --- Audio Streamer Hook ---
     const PI_IP_ADDRESS = '192.168.100.61'; // <--- *** PROMIJENI AKO TREBA ***
@@ -34,104 +31,126 @@ export default function Dashboard({ auth }) {
     // --- Glavna Funkcija za Pokretanje/Zaustavljanje Nadzora ---
     const handleToggleMonitoring = () => {
         const turningOn = !isMonitoringActive;
-        setIsMonitoringActive(turningOn); // Odmah promijeni UI stanje
-
+        setIsMonitoringActive(turningOn);
         if (turningOn) {
-            console.log('Starting Monitoring (Audio + Camera Placeholder)...');
-            startStreaming(); // Pokreni audio stream
-            // Placeholder kamere će se prikazati zbog promjene isMonitoringActive
+            console.log('Starting Monitoring...');
+            startStreaming();
         } else {
-            console.log('Stopping Monitoring (Audio + Camera Placeholder)...');
-            stopStreaming(); // Zaustavi audio stream
-            // Placeholder kamere će se sakriti zbog promjene isMonitoringActive
-            // Opcionalno resetiraj i mute/volume kad se zaustavi
-            // setIsMuted(false);
-            // setVolume([50]);
+            console.log('Stopping Monitoring...');
+            stopStreaming();
         }
     };
 
-    // --- Audio Kontrole (Mute/Volume) ---
+    // --- Audio Kontrole ---
     const handleToggleMute = () => {
         if (!isAudioStreaming) return;
-        console.log('Toggle Mute clicked');
         setIsMuted(prevState => !prevState);
         // TODO: Povezati s Web Audio API (gain node)
     };
 
     const handleVolumeChange = (value) => {
-        if (!isAudioStreaming || isMuted) return; // Ne mijenjaj ako je mutirano
-        console.log('Volume changed:', value[0]);
+        if (!isAudioStreaming || isMuted) return;
         setVolume(value);
         // TODO: Povezati s Web Audio API (gain node)
     };
 
-    // --- Fullscreen Funkcija ---
-    const handleToggleFullscreen = () => {
+    // --- Fullscreen Funkcija (poboljšana s logiranjem) ---
+    const handleToggleFullscreen = useCallback(() => {
         const elem = videoContainerRef.current;
-        if (!elem) return;
+        if (!elem) {
+            console.error("Fullscreen target element not found.");
+            return;
+        }
 
-        if (!document.fullscreenElement && !document.webkitFullscreenElement) { // Provjeri i za Safari
+        // Provjeravamo je li preglednik trenutno u fullscreen modu
+        const isInFullScreen = !!(document.fullscreenElement || document.webkitFullscreenElement);
+        console.log("Is currently in fullscreen:", isInFullScreen);
+
+        if (!isInFullScreen) {
             // Ulazak u fullscreen
-            const requestMethod = elem.requestFullscreen || elem.webkitRequestFullscreen;
+            console.log("Requesting fullscreen...");
+            const requestMethod = elem.requestFullscreen || elem.webkitRequestFullscreen; // Dodajemo i druge prefixe ako zatreba (mozRequestFullScreen, msRequestFullscreen)
             if (requestMethod) {
-                requestMethod.call(elem).catch(err => {
-                    console.error(`Error attempting fullscreen: ${err.message} (${err.name})`);
-                    // Resetiraj stanje ako ne uspije
+                requestMethod.call(elem).then(() => {
+                    console.log("Fullscreen requested successfully.");
+                    // Stanje će se ažurirati putem event listenera
+                }).catch(err => {
+                    console.error(`Error attempting to enable full-screen mode: ${err.message} (${err.name})`);
+                    // Resetiraj stanje ako API poziv ne uspije
                     setIsFullscreen(false);
                 });
-                // Ne postavljaj odmah na true, osloni se na event listener
+            } else {
+                console.error("Fullscreen API is not supported by this browser.");
             }
         } else {
             // Izlazak iz fullscreena
+            console.log("Exiting fullscreen...");
             const exitMethod = document.exitFullscreen || document.webkitExitFullscreen;
             if (exitMethod) {
-                exitMethod.call(document);
-                // Ne postavljaj odmah na false, osloni se na event listener
+                exitMethod.call(document).then(() => {
+                    console.log("Fullscreen exited successfully.");
+                    // Stanje će se ažurirati putem event listenera
+                }).catch(err => {
+                    console.error(`Error attempting to disable full-screen mode: ${err.message} (${err.name})`);
+                });
+            } else {
+                console.error("Exit Fullscreen API is not supported by this browser.");
             }
         }
-    };
+        // Stanje 'isFullscreen' će se ažurirati putem event listenera ispod
+    }, []); // useCallback da se funkcija ne rekreira nepotrebno
 
-    // Effect za praćenje promjena fullscreen stanja (uklj. Esc tipku)
+    // Effect za praćenje promjena fullscreen stanja (uklj. Esc tipku i promjene putem API-ja)
     useEffect(() => {
         const handleFullscreenChange = () => {
-            setIsFullscreen(!!(document.fullscreenElement || document.webkitFullscreenElement));
+            const currentlyFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement);
+            console.log("Fullscreen change event detected. Is fullscreen:", currentlyFullscreen);
+            setIsFullscreen(currentlyFullscreen);
         };
-        document.addEventListener('fullscreenchange', handleFullscreenChange);
-        document.addEventListener('webkitfullscreenchange', handleFullscreenChange); // Za Safari
 
+        // Dodajemo listener za standardni API i za webkit (Safari)
+        document.addEventListener('fullscreenchange', handleFullscreenChange);
+        document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+
+        // Cleanup funkcija za uklanjanje listenera
         return () => {
             document.removeEventListener('fullscreenchange', handleFullscreenChange);
             document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
         };
-    }, []);
+    }, []); // Prazan dependency array znači da se ovo pokreće samo jednom (mount/unmount)
 
     // --- Detektor Kakice State & Effect ---
     const [poopStatus, setPoopStatus] = useState('Detektor neaktivan');
-    const [scanProgress, setScanProgress] = useState(0);
+    // Maknuli smo scanProgress, animacija će biti vizualna
 
     useEffect(() => {
-        let intervalId = null;
-        if (isMonitoringActive) { // Koristi isMonitoringActive sada
-            setPoopStatus("Skeniranje u tijeku..."); // Resetiraj status kod paljenja
-            intervalId = setInterval(() => {
-                setScanProgress(prev => {
-                    const next = prev + 10;
-                    if (next > 100) {
-                        setPoopStatus("Nema opasnosti! (Za sada...)");
-                        return 0; // Resetiraj progress
+        let timeoutId = null;
+        if (isMonitoringActive) {
+            // Funkcija koja simulira promjenu statusa
+            const simulateDetection = () => {
+                setPoopStatus("Skeniranje u tijeku...");
+                // Postavi timeout za "rezultat" skeniranja
+                timeoutId = setTimeout(() => {
+                    // Ovdje bi inače došla prava logika detekcije
+                    // Nasumično ćemo reći je li ok ili nije :)
+                    const detected = Math.random() > 0.8; // 20% šanse za "detekciju"
+                    if (detected) {
+                        setPoopStatus("🚨 Alarm! Moguća kakica! 🚨");
                     } else {
-                        setPoopStatus("Skeniranje u tijeku...");
-                        return next;
+                        setPoopStatus("Nema opasnosti! (Za sada...)");
+                        // Ponovno pokreni skeniranje nakon pauze
+                        timeoutId = setTimeout(simulateDetection, 2000); // Pauza prije novog skeniranja
                     }
-                });
-            }, 400); // Malo sporije skeniranje :)
+                }, 3000 + Math.random() * 2000); // Trajanje skeniranja (3-5 sek)
+            };
+            simulateDetection(); // Pokreni prvi put
+
         } else {
             setPoopStatus("Detektor neaktivan");
-            setScanProgress(0);
         }
-        // Očisti interval kad se stanje promijeni ili komponenta unmounta
+        // Očisti timeout kad se stanje promijeni ili komponenta unmounta
         return () => {
-            if (intervalId) clearInterval(intervalId);
+            if (timeoutId) clearTimeout(timeoutId);
         };
     }, [isMonitoringActive]); // Ovisi samo o glavnom stanju nadzora
 
@@ -139,14 +158,7 @@ export default function Dashboard({ auth }) {
     const airQuality = 45;
 
     return (
-        <AuthenticatedLayout
-            user={auth.user}
-            header={
-                <h2 className="font-semibold text-xl text-gray-800 dark:text-gray-200 leading-tight">
-                    Bartul Monitor v1.1 ✨
-                </h2>
-            }
-        >
+        <AuthenticatedLayout user={auth.user}>
             <Head title="Kontrolna Ploča" />
 
             <div className="py-6 md:py-12">
@@ -161,16 +173,18 @@ export default function Dashboard({ auth }) {
                         <Card className="lg:col-span-2 shadow-lg">
                             <CardHeader>
                                 <CardTitle>Nadzor Uživo</CardTitle>
-                                <CardDescription>Video i audio stream od Bartula.</CardDescription>
+                                <CardDescription>Video i audio nadzor Bartula.</CardDescription>
                             </CardHeader>
                             <CardContent>
-                                {/* Video Player Area s ref-om i relative pozicijom za gumb */}
+                                {/* Video Player Area s ref-om */}
+                                {/* Dodajemo background boju i na sam ref element za bolji fullscreen doživljaj */}
                                 <div ref={videoContainerRef} className="relative aspect-video bg-slate-900 dark:bg-black text-white flex items-center justify-center rounded mb-4 overflow-hidden">
                                     {isMonitoringActive ? (
                                         <img
-                                            src="/images/bartul.png"
+                                            src="/images/bartul.png" // Provjeri putanju
                                             alt="Bartul - Nadzor Aktivan"
-                                            className="object-contain h-full w-full"
+                                            // *** PROMJENA: object-cover umjesto object-contain ***
+                                            className="object-cover h-full w-full"
                                         />
                                     ) : (
                                         <div className="text-center p-4">
@@ -178,15 +192,14 @@ export default function Dashboard({ auth }) {
                                             <p className="text-gray-400">Nadzor je isključen</p>
                                         </div>
                                     )}
-                                    {/* TODO: Pravi <video> element */}
 
                                     {/* Fullscreen gumb (prikazuje se samo ako je nadzor aktivan) */}
                                     {isMonitoringActive && (
                                         <Button
-                                            variant="ghost" // Duh gumb, manje napadan
+                                            variant="ghost"
                                             size="icon"
-                                            onClick={handleToggleFullscreen}
-                                            className="absolute top-2 right-2 text-white bg-black/30 hover:bg-black/60 focus-visible:ring-offset-0 focus-visible:ring-white"
+                                            onClick={handleToggleFullscreen} // Koristi useCallback verziju
+                                            className="absolute top-2 right-2 text-white bg-black/30 hover:bg-black/60 focus-visible:ring-offset-0 focus-visible:ring-white z-10" // Dodan z-index za svaki slučaj
                                             title={isFullscreen ? "Izađi iz Fullscreena" : "Fullscreen"}
                                         >
                                             {isFullscreen ? <Minimize className="h-5 w-5" /> : <Maximize className="h-5 w-5" />}
@@ -196,23 +209,21 @@ export default function Dashboard({ auth }) {
 
                                 {/* Kontrole */}
                                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                                    {/* Glavni Play/Stop Gumb */}
                                     <Button
                                         variant={isMonitoringActive ? "destructive" : "default"}
                                         onClick={handleToggleMonitoring}
                                         size="sm"
                                         disabled={!PI_IP_ADDRESS || PI_IP_ADDRESS === 'YOUR_PI_IP_ADDRESS'}
-                                        className={`${isMonitoringActive ? '' : 'bg-green-600 hover:bg-green-700'}`} // Zeleni kad je OFF
+                                        className={`${isMonitoringActive ? '' : 'bg-green-600 hover:bg-green-700'}`}
                                     >
                                         {isMonitoringActive ? <StopCircle className="h-4 w-4 mr-2" /> : <Play className="h-4 w-4 mr-2" />}
                                         {isMonitoringActive ? 'Zaustavi Nadzor' : 'Pokreni Nadzor'}
                                     </Button>
 
-                                    {/* Audio Kontrole (Mute/Volume) - vidljivo samo kad stream radi */}
                                     <AnimatePresence>
-                                        {isAudioStreaming && ( // Prikaz ovisi o isAudioStreaming iz hooka
+                                        {isAudioStreaming && (
                                             <motion.div
-                                                key="audioControls" // Dodaj key za ispravan rad AnimatePresence
+                                                key="audioControls"
                                                 initial={{ opacity: 0, width: 0 }}
                                                 animate={{ opacity: 1, width: 'auto' }}
                                                 exit={{ opacity: 0, width: 0 }}
@@ -232,14 +243,13 @@ export default function Dashboard({ auth }) {
                                                         step={1}
                                                         className={`w-full ${isMuted ? 'opacity-50 cursor-not-allowed' : ''}`}
                                                         onValueChange={handleVolumeChange}
-                                                        disabled={isMuted} // Slider je disabled kad je mutirano
+                                                        disabled={isMuted}
                                                     />
                                                 </div>
                                             </motion.div>
                                         )}
                                     </AnimatePresence>
                                 </div>
-                                {/* Prikaz eventualne audio greške */}
                                 {audioError && (
                                     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-4 p-3 text-xs bg-red-100 dark:bg-red-900/50 text-red-700 dark:text-red-300 border border-red-400 dark:border-red-700 rounded flex items-center gap-2">
                                         <AlertCircle className="h-4 w-4" /> Audio Greška: {audioError}
@@ -279,35 +289,51 @@ export default function Dashboard({ auth }) {
                             </Card>
 
                             {/* Detektor Kakice :) */}
-                            <Card className="shadow-lg">
+                            <Card className="shadow-lg overflow-hidden"> {/* Dodan overflow-hidden ovdje */}
                                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                                    <CardTitle className="text-sm font-medium">Detektor Kakice™</CardTitle>
-                                    <ScanLine className={`h-4 w-4 ${isMonitoringActive ? 'text-blue-500 animate-pulse' : 'text-muted-foreground'}`} />
+                                    <CardTitle className="text-sm font-medium">Detektor Kakice™ 💩</CardTitle>
+                                    {/* Ikona sada pulsira samo kad je status "Skeniranje..." */}
+                                    <ScanLine className={`h-4 w-4 ${poopStatus.includes("Skeniranje") ? 'text-sky-500 animate-pulse' : 'text-muted-foreground'}`} />
                                 </CardHeader>
                                 <CardContent>
+                                    {/* *** NOVA ANIMACIJA: Gradient Sweep *** */}
                                     <AnimatePresence>
-                                        {isMonitoringActive && (
+                                        {isMonitoringActive && ( // Prikazujemo bar samo kad je monitoring aktivan
                                             <motion.div
-                                                key="scanLine"
+                                                key="scanBar"
                                                 initial={{ opacity: 0 }}
                                                 animate={{ opacity: 1 }}
                                                 exit={{ opacity: 0 }}
-                                                className="h-2 bg-gray-200 dark:bg-gray-700 rounded overflow-hidden mb-2 relative" // Dodaj relative za pozicioniranje linije
+                                                // Osnovna siva pozadina bara
+                                                className="h-3 bg-gray-200 dark:bg-gray-700 rounded mb-2 overflow-hidden relative"
                                             >
+                                                {/* Animirani gradient overlay */}
                                                 <motion.div
-                                                    className="h-full bg-blue-500 absolute top-0 bottom-0 w-1" // Tanki vertikalni marker
-                                                    initial={{ x: "0%" }}
-                                                    animate={{ x: "100%" }} // Kreće se od 0% do 100% unutar parenta
-                                                    transition={{ duration: 0.8, repeat: Infinity, repeatType: "mirror", ease: "easeInOut" }} // Ide lijevo-desno
+                                                    className="absolute inset-0 h-full w-full"
+                                                    style={{
+                                                        // Prozirno -> Plavo (malo jače) -> Prozirno
+                                                        background: `linear-gradient(90deg, transparent 0%, rgba(56, 189, 248, 0.7) 50%, transparent 100%)`, // sky-400 sa 70% opacity
+                                                        backgroundSize: '300% 100%', // Širi gradient da sweep bude ljepši
+                                                    }}
+                                                    initial={{ backgroundPosition: '150% 0' }} // Počni s desne strane
+                                                    animate={{ backgroundPosition: '-150% 0' }} // Završi na lijevoj strani
+                                                    transition={{
+                                                        duration: 1.8, // Malo sporiji sweep
+                                                        repeat: Infinity,
+                                                        ease: 'linear', // Konstantna brzina
+                                                        // Prikazuj samo dok skenira
+                                                        display: poopStatus.includes("Skeniranje") ? 'block' : 'none',
+                                                    }}
                                                 />
                                             </motion.div>
                                         )}
                                     </AnimatePresence>
-                                    <div className={`text-lg font-semibold ${!isMonitoringActive || poopStatus.includes("Nema opasnosti") ? 'text-gray-700 dark:text-gray-300' : 'text-yellow-600 dark:text-yellow-400'}`}>
+
+                                    <div className={`text-lg font-semibold ${poopStatus.includes("Alarm") ? 'text-red-600 dark:text-red-400 animate-pulse' : poopStatus.includes("Skeniranje") ? 'text-sky-600 dark:text-sky-400' : 'text-gray-700 dark:text-gray-300'}`}>
                                         {poopStatus}
                                     </div>
                                     <p className="text-xs text-muted-foreground">
-                                        Stanje pelene u realnom vremenu.*
+                                        {poopStatus.includes("Alarm") ? "Provjeri pelenu!" : poopStatus.includes("Skeniranje") ? "Analiziram..." : "Stanje pelene u realnom vremenu.*"}
                                     </p>
                                     <p className="text-[10px] text-muted-foreground/50 mt-1">*Preciznost može varirati.</p>
                                 </CardContent>
