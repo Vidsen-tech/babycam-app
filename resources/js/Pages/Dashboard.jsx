@@ -183,8 +183,9 @@ export default function Dashboard({ auth }) {
                                         <img
                                             src="/images/bartul.png" // Provjeri putanju
                                             alt="Bartul - Nadzor Aktivan"
-                                            // *** PROMJENA: object-cover umjesto object-contain ***
-                                            className="object-cover h-full w-full"
+                                            // *** PROMJENA: object-contain umjesto object-cover ***
+                                            // This makes the entire image visible, potentially adding letterboxing/pillarboxing
+                                            className="object-contain h-full w-full"
                                         />
                                     ) : (
                                         <div className="text-center p-4">
@@ -198,8 +199,8 @@ export default function Dashboard({ auth }) {
                                         <Button
                                             variant="ghost"
                                             size="icon"
-                                            onClick={handleToggleFullscreen} // Koristi useCallback verziju
-                                            className="absolute top-2 right-2 text-white bg-black/30 hover:bg-black/60 focus-visible:ring-offset-0 focus-visible:ring-white z-10" // Dodan z-index za svaki slučaj
+                                            onClick={handleToggleFullscreen}
+                                            className="absolute top-2 right-2 text-white bg-black/30 hover:bg-black/60 focus-visible:ring-offset-0 focus-visible:ring-white z-10"
                                             title={isFullscreen ? "Izađi iz Fullscreena" : "Fullscreen"}
                                         >
                                             {isFullscreen ? <Minimize className="h-5 w-5" /> : <Maximize className="h-5 w-5" />}
