@@ -5,44 +5,46 @@ export function useAudioStreamer(wsUrl) {
     const [isStreaming, setIsStreaming] = useState(false);
     const [error, setError]             = useState(null);
 
-    const ws           = useRef(null);
-    const ctx          = useRef(null);
-    const queue        = useRef([]);
-    const nextTime     = useRef(0);
-    const serverRate   = useRef(48000);
-    const infoOK       = useRef(false);
+    const ws         = useRef(null);
+    const ctx        = useRef(null);
+    const queue      = useRef([]);
+    const pumping    = useRef(false);          // <<< NEW  (tracks if pump() is currently running)
+    const nextTime   = useRef(0);
+    const serverRate = useRef(48000);
+    const infoOK     = useRef(false);
+
+    const MIN_QUEUE  = 3;                      // <<< NEW  (start pumping only when ≥ 3 blocks queued)
 
     /* ---------- helpers ---------- */
 
     const ensureCtx = async () => {
         const AudioCtx = window.AudioContext || window.webkitAudioContext;
         ctx.current ??= new AudioCtx({ latencyHint: "interactive" });
-
-        /* Tell iOS that this is media playback (iOS 16.4+) */
-        if ("audioSession" in navigator) {
-            try { navigator.audioSession.type = "playback"; } catch { /* ignore */ }
-        }
-
-        if (ctx.current.state === "suspended") {
-            try { await ctx.current.resume(); } catch { /* ignore */ }
-        }
+        if ("audioSession" in navigator)     // iOS plays even when the ringer switch is off
+            try { navigator.audioSession.type = "playback"; } catch {}
+        if (ctx.current.state === "suspended")
+            try { await ctx.current.resume(); } catch {}
     };
 
     const fill = (buf, data) =>
         buf.copyToChannel ? buf.copyToChannel(data, 0)
-            : buf.getChannelData(0).set(data); // old Safari
+            : buf.getChannelData(0).set(data);
 
     const resample = (int16) => {
-        const ratio  = serverRate.current / ctx.current.sampleRate;
-        const outLen = Math.round(int16.length / ratio);
-        const out    = new Float32Array(outLen);
+        const ratio   = serverRate.current / ctx.current.sampleRate;
+        const outLen  = Math.round(int16.length / ratio);
+        const out     = new Float32Array(outLen);
         for (let i = 0; i < outLen; i++) out[i] = int16[Math.floor(i * ratio)] / 32768;
         return out;
     };
 
+    /* ---------- pump loop ---------- */
     const pump = useCallback(async () => {
-        if (!queue.current.length) return;
-        await ensureCtx();                       // make sure ctx is running
+        if (!queue.current.length) {           // nothing left → stop pumping
+            pumping.current = false;             // <<< NEW
+            return;
+        }
+        await ensureCtx();
 
         const data   = queue.current.shift();
         const buffer = ctx.current.createBuffer(1, data.length, ctx.current.sampleRate);
@@ -58,10 +60,9 @@ export function useAudioStreamer(wsUrl) {
 
         nextTime.current += buffer.duration;
 
-        if (queue.current.length) {
-            const ahead = Math.max(buffer.duration * 500, 10);
-            setTimeout(pump, buffer.duration * 1000 - ahead);
-        }
+        /* schedule next run slightly before this buffer ends */
+        const ahead = Math.max(buffer.duration * 500, 10);
+        setTimeout(pump, buffer.duration * 1000 - ahead);
     }, []);
 
     /* ---------- public API ---------- */
@@ -71,6 +72,7 @@ export function useAudioStreamer(wsUrl) {
         ctx.current?.close();  ctx.current = null;
 
         queue.current.length = 0;
+        pumping.current      = false;          // <<< NEW
         nextTime.current     = 0;
         infoOK.current       = false;
         setIsStreaming(false);
@@ -97,10 +99,9 @@ export function useAudioStreamer(wsUrl) {
                         serverRate.current = info.sampleRate;
                         infoOK.current     = true;
                     }
-                } catch {/* ignore */}
+                } catch {}
                 return;
             }
-
             if (!(evt.data instanceof ArrayBuffer) || !infoOK.current) return;
 
             const int16   = new Int16Array(evt.data);
@@ -109,7 +110,12 @@ export function useAudioStreamer(wsUrl) {
                 : resample(int16);
 
             queue.current.push(samples);
-            if (queue.current.length === 1) pump();
+
+            /* ---------- PRE‑BUFFER LOGIC ---------- */
+            if (queue.current.length >= MIN_QUEUE && !pumping.current) {
+                pumping.current = true;
+                pump();
+            }
         };
 
         ws.current.onerror = (e) => {
