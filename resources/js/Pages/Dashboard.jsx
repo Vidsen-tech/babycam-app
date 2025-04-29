@@ -181,11 +181,15 @@ export default function Dashboard({ auth }) {
                                 <div ref={videoContainerRef} className="relative aspect-video bg-slate-900 dark:bg-black text-white flex items-center justify-center rounded mb-4 overflow-hidden">
                                     {isMonitoringActive ? (
                                         <img
-                                            src="/images/bartul.png" // Provjeri putanju
-                                            alt="Bartul - Nadzor Aktivan"
-                                            // *** PROMJENA: object-contain umjesto object-cover ***
-                                            // This makes the entire image visible, potentially adding letterboxing/pillarboxing
+                                            key={isMonitoringActive ? 'video-on' : 'video-off'} // <-- ISPRAVAK OVDJE
+                                            src={`http://${PI_IP_ADDRESS}:8090/stream.mjpg`}
+                                            alt="Live Bartul Stream"
+                                            onError={(e) => {
+                                                console.error("MJPEG stream greška ili nije dostupan:", e);
+                                                e.target.style.display = 'none';
+                                            }}
                                             className="object-contain h-full w-full"
+                                            style={{ display: isMonitoringActive ? 'block' : 'none' }} // <-- ISPRAVAK OVDJE
                                         />
                                     ) : (
                                         <div className="text-center p-4">
