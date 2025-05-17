@@ -23,7 +23,7 @@ export default function Dashboard({ auth }) {
     const videoContainerRef = useRef(null); // Ref za kontejner koji ide u fullscreen
 
     // --- Audio Streamer Hook ---
-    const PI_IP_ADDRESS = '192.168.100.61'; // <--- *** PROMIJENI AKO TREBA ***
+    const PI_IP_ADDRESS = '192.168.178.61'; // <--- *** PROMIJENI AKO TREBA ***
     const WEBSOCKET_PORT = 8765;
     const wsUrl = `ws://${PI_IP_ADDRESS}:${WEBSOCKET_PORT}`;
     const { isAudioStreaming, error: audioError, startStreaming, stopStreaming } = useAudioStreamer(wsUrl);
