@@ -1,20 +1,20 @@
 // resources/js/Hooks/useAudioStreamer.jsx
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { OpusDecoder } from 'opus-decoder'; // VAŽAN IMPORT
+import { OpusDecoder } from 'opus-decoder'; // Provjeri jesi li ovo instalirao: npm install opus-decoder
 
 export function useAudioStreamer(webSocketUrl) {
     const [isAudioStreaming, setIsAudioStreaming] = useState(false);
     const [error, setError] = useState(null);
-    // === Interno stanje za Mute i Volume unutar Hooka ===
-    const [isMutedHook, setIsMutedHook] = useState(false); // Preimenovano da se ne sukobi ako Dashboard ima isto
-    const [volumeHook, setVolumeHook] = useState(50);    // Početna glasnoća 50%
+    const [isMutedHook, setIsMutedHook] = useState(false);
+    const [volumeHook, setVolumeHook] = useState(50);
 
     const ws = useRef(null);
     const audioContext = useRef(null);
     const gainNodeRef = useRef(null);
     const opusDecoder = useRef(null);
     const audioQueue = useRef([]);
-    const audioInfo = useRef(null);
+    const audioInfo = useRef(null); // Sprema {codec, sampleRate, channels}
+    const audioInfoReceived = useRef(false); // <<< OVAJ REF JE VJEROJATNO FALIO ILI BIO KRIVO KORIŠTEN
 
     const ensureAudioNodes = useCallback(() => {
         if (!audioInfo.current) {
@@ -27,7 +27,6 @@ export function useAudioStreamer(webSocketUrl) {
                 const targetSampleRate = audioInfo.current.sampleRate || 48000;
                 audioContext.current = new AudioContext({ sampleRate: targetSampleRate });
                 gainNodeRef.current = audioContext.current.createGain();
-                // Postavi početni gain na temelju internog stanja hooka
                 gainNodeRef.current.gain.value = isMutedHook ? 0 : volumeHook / 100;
                 gainNodeRef.current.connect(audioContext.current.destination);
                 console.log(`AudioStreamer: AudioContext kreiran (Rate: ${audioContext.current.sampleRate}). State: ${audioContext.current.state}.`);
@@ -39,26 +38,30 @@ export function useAudioStreamer(webSocketUrl) {
         } else if (audioContext.current.state === 'suspended') {
             audioContext.current.resume().catch(e => console.error("AudioStreamer ERROR resuming existing AudioContext:", e));
         }
-        if (audioContext.current && !gainNodeRef.current) { // Osiguraj da gainNode postoji
+        if (audioContext.current && !gainNodeRef.current) {
             gainNodeRef.current = audioContext.current.createGain();
             gainNodeRef.current.gain.value = isMutedHook ? 0 : volumeHook / 100;
             gainNodeRef.current.connect(audioContext.current.destination);
         }
         return true;
-    }, [isMutedHook, volumeHook]);
+    }, [isMutedHook, volumeHook]); // Ovdje audioInfo.current ne treba biti dependency jer se koristi samo kod prve inicijalizacije contexta
 
     const processAudioQueue = useCallback(() => {
-        if (audioQueue.current.length === 0 || !audioContext.current || audioContext.current.state !== 'running' || !gainNodeRef.current || !audioInfo.current) return;
+        if (audioQueue.current.length === 0 || !audioContext.current || audioContext.current.state !== 'running' || !gainNodeRef.current || !audioInfo.current) {
+            return;
+        }
         const pcmFloat32Data = audioQueue.current.shift();
         try {
+            const currentChannels = audioInfo.current.channels || 1;
             const audioBuffer = audioContext.current.createBuffer(
-                audioInfo.current.channels || 1,
-                pcmFloat32Data.length / (audioInfo.current.channels || 1),
+                currentChannels,
+                pcmFloat32Data.length / currentChannels,
                 audioContext.current.sampleRate
             );
-            if ((audioInfo.current.channels || 1) === 1) {
+
+            if (currentChannels === 1) {
                 audioBuffer.copyToChannel(pcmFloat32Data, 0);
-            } else { // Prilagodba za stereo ako decoder daje interleaved
+            } else {
                 const leftChannel = new Float32Array(pcmFloat32Data.length / 2);
                 const rightChannel = new Float32Array(pcmFloat32Data.length / 2);
                 for (let i = 0, j = 0; i < pcmFloat32Data.length; i += 2, j++) {
@@ -68,38 +71,38 @@ export function useAudioStreamer(webSocketUrl) {
                 audioBuffer.copyToChannel(leftChannel, 0);
                 if (audioBuffer.numberOfChannels > 1) audioBuffer.copyToChannel(rightChannel, 1);
             }
+
             const sourceNode = audioContext.current.createBufferSource();
             sourceNode.buffer = audioBuffer;
             sourceNode.connect(gainNodeRef.current);
             sourceNode.start();
-            if (audioQueue.current.length > 0) { processAudioQueue(); }
+            if (audioQueue.current.length > 0) {
+                processAudioQueue();
+            }
         } catch (e) { console.error("AudioStreamer ERROR in processAudioQueue:", e); setError(`Greška pri obradi zvuka: ${e.message}`); }
     }, []); // Prazan dependency array
 
     const stopStreaming = useCallback(() => {
         console.log("AudioStreamer: Pozvan stopStreaming");
         if (ws.current) { ws.current.onclose = null; ws.current.onerror = null; ws.current.onmessage = null; ws.current.onopen = null; ws.current.close(); ws.current = null; console.log("AudioStreamer: WebSocket zatvoren."); }
-        if (opusDecoder.current) { try { opusDecoder.current.free(); } catch(e) {console.error("Error freeing opus decoder", e); } opusDecoder.current = null; console.log("AudioStreamer: OpusDecoder oslobođen.");}
-        // Odgodi zatvaranje AudioContexta da se izbjegnu greške ako nešto još radi
+        if (opusDecoder.current) { try { opusDecoder.current.free(); } catch (e) {console.error("Error freeing opus decoder", e); } opusDecoder.current = null; console.log("AudioStreamer: OpusDecoder oslobođen.");}
         setTimeout(() => {
             if (audioContext.current && audioContext.current.state !== 'closed') {
                 audioContext.current.close().then(() => {
                     console.log("AudioStreamer: AudioContext zatvoren.");
-                    audioContext.current = null;
-                    gainNodeRef.current = null;
+                    audioContext.current = null; gainNodeRef.current = null;
                 }).catch(e => console.error("AudioStreamer ERROR closing AudioContext:", e));
             } else {
-                audioContext.current = null;
-                gainNodeRef.current = null;
+                audioContext.current = null; gainNodeRef.current = null;
             }
         }, 100);
-        setIsAudioStreaming(false); setError(null); audioQueue.current = []; audioInfoReceived.current = false;
-    }, []); // Prazan dependency array
+        setIsAudioStreaming(false); setError(null); audioQueue.current = []; audioInfoReceived.current = false; // Vrati audioInfoReceived na false
+    }, []);
 
     const startStreaming = useCallback(() => {
         if (!webSocketUrl) { setError('WebSocket URL nije zadan.'); return; }
-        if (isAudioStreaming || ws.current) { console.log('AudioStreamer: Streaming već aktivan ili WS postoji.'); return; }
-        setError(null); audioQueue.current = []; audioInfoReceived.current = false;
+        if (isAudioStreaming || ws.current) { console.log('AudioStreamer: Streaming već aktivan.'); return; }
+        setError(null); audioQueue.current = []; audioInfoReceived.current = false; // Resetiraj na početku
 
         console.log(`AudioStreamer: Spajanje na ${webSocketUrl}...`);
         ws.current = new WebSocket(webSocketUrl);
@@ -107,7 +110,7 @@ export function useAudioStreamer(webSocketUrl) {
 
         ws.current.onopen = () => {
             console.log('AudioStreamer: WebSocket konekcija otvorena.');
-            setIsAudioStreaming(true); // Postavi da streamanje radi
+            setIsAudioStreaming(true);
         };
 
         ws.current.onmessage = async (event) => {
@@ -116,19 +119,22 @@ export function useAudioStreamer(webSocketUrl) {
                     const info = JSON.parse(event.data);
                     if (info.type === 'audio_info' && info.codec === 'opus') {
                         console.log("AudioStreamer: Primljene Opus audio informacije:", info);
-                        audioInfo.current = info; // Spremi info
-                        if (!ensureAudioNodes()) return; // Inicijaliziraj/osiguraj AudioContext i GainNode
-
+                        audioInfo.current = info; // Spremi CIJELI info objekt
+                        // Inicijaliziraj AudioContext i OpusDecoder NAKON što dobiješ info
+                        if (!ensureAudioNodes()) { // ensureAudioNodes sada koristi audioInfo.current.sampleRate
+                            stopStreaming(); // Ako ne uspije inicijalizacija nodeova, prekini
+                            return;
+                        }
                         if (opusDecoder.current) opusDecoder.current.free();
                         opusDecoder.current = new OpusDecoder({
-                            channels: info.channels || 1,
-                            sampleRate: info.sampleRate || 48000, // Ovo je ULAZNI sample rate za dekoder
+                            channels: audioInfo.current.channels || 1,
+                            sampleRate: audioInfo.current.sampleRate || 48000,
                         });
-                        console.log(`AudioStreamer: OpusDecoder inicijaliziran za ulaz ${info.sampleRate || 48000}Hz, ${info.channels || 1}ch. Izlazni rate dekodera je isti.`);
-                        audioInfoReceived.current = true;
+                        console.log(`AudioStreamer: OpusDecoder inicijaliziran za ulaz ${audioInfo.current.sampleRate || 48000}Hz, ${audioInfo.current.channels || 1}ch.`);
+                        audioInfoReceived.current = true; // Postavi da je info primljen
                     }
                 } catch (e) { console.error("AudioStreamer: JSON parse error (info):", e); }
-            } else if (event.data instanceof ArrayBuffer && audioInfoReceived.current && opusDecoder.current) {
+            } else if (event.data instanceof ArrayBuffer && audioInfoReceived.current && opusDecoder.current) { // Provjeravaj audioInfoReceived.current
                 if (!audioContext.current || audioContext.current.state !== 'running') {
                     if (audioContext.current && audioContext.current.state === 'suspended') {
                         await audioContext.current.resume().catch(e => console.error("Error resuming context", e));
@@ -138,8 +144,8 @@ export function useAudioStreamer(webSocketUrl) {
                 try {
                     const { channelData, samplesDecoded } = opusDecoder.current.decodeFrame(new Uint8Array(event.data));
                     if (samplesDecoded > 0) {
-                        audioQueue.current.push(channelData[0]); // Pretpostavljamo mono
-                        if (audioQueue.current.length === 1) { processAudioQueue(); }
+                        audioQueue.current.push(channelData[0]);
+                        if (audioQueue.current.length === 1 && audioContext.current.state === 'running') { processAudioQueue(); }
                     }
                 } catch (e) { console.error("AudioStreamer: Opus decode error:", e); }
             }
@@ -148,15 +154,8 @@ export function useAudioStreamer(webSocketUrl) {
         ws.current.onclose = (event) => { console.log(`AudioStreamer: WebSocket konekcija zatvorena. Code: ${event.code}, Reason: "${event.reason}"`); if(ws.current) { setError(`WS zatvoren (code: ${event.code})`); stopStreaming(); }};
     }, [webSocketUrl, isAudioStreaming, stopStreaming, processAudioQueue, ensureAudioNodes]);
 
-    // Efekt za čišćenje (ostaje isti)
-    useEffect(() => {
-        return () => {
-            stopStreaming();
-        };
-    }, [stopStreaming]);
+    useEffect(() => { return () => { stopStreaming(); }; }, [stopStreaming]);
 
-
-    // === NOVE Funkcije za Mute i Volume koje vraća hook ===
     const toggleMuteHook = useCallback(() => {
         setIsMutedHook(prevMuted => {
             const newMuteState = !prevMuted;
@@ -167,7 +166,7 @@ export function useAudioStreamer(webSocketUrl) {
             console.log(`AudioStreamer: Mute toggled by hook. New state: ${newMuteState}`);
             return newMuteState;
         });
-    }, [volumeHook]); // Ovisi o volumeHook da zna na što vratiti gain
+    }, [volumeHook]);
 
     const setVolumeLevelHook = useCallback((newVolume) => {
         const newVolClamped = Math.max(0, Math.min(100, newVolume));
@@ -177,16 +176,11 @@ export function useAudioStreamer(webSocketUrl) {
             gainNodeRef.current.gain.linearRampToValueAtTime(gainValue, audioContext.current.currentTime + 0.05);
         }
         console.log(`AudioStreamer: Volume set by hook to ${newVolClamped}`);
-    }, [isMutedHook]); // Ovisi o isMutedHook da zna treba li primijeniti gain
+    }, [isMutedHook]);
 
     return {
-        isAudioStreaming,
-        error,
-        startStreaming,
-        stopStreaming,
-        isMuted: isMutedHook,       // Vrati interno mute stanje hooka
-        volume: volumeHook,         // Vrati interno volume stanje hooka (0-100)
-        toggleMute: toggleMuteHook, // Vrati funkciju za Mute
-        setVolumeLevel: setVolumeLevelHook // Vrati funkciju za Volume
+        isAudioStreaming, error, startStreaming, stopStreaming,
+        isMuted: isMutedHook, volume: volumeHook,
+        toggleMute: toggleMuteHook, setVolumeLevel: setVolumeLevelHook
     };
 }
