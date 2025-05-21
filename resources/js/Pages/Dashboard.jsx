@@ -44,12 +44,14 @@ export default function Dashboard({ auth }) {
     // --- EFEKT: Sinkronizacija Namjere i Stvarnog Streama ---
     useEffect(() => {
         if (isMonitoringActive) {
-            if (!isAudioStreaming) {
+            // Pokreni stream samo ako već ne radi
+            if (!isAudioStreaming) { // Koristi isAudioStreaming iz hooka
                 console.log("Dashboard Effect: Namjera=ON, Stream=OFF -> Pokrećem audio stream...");
                 startStreaming();
             }
         } else {
-            if (isAudioStreaming) {
+            // Zaustavi stream samo ako radi
+            if (isAudioStreaming) { // Koristi isAudioStreaming iz hooka
                 console.log("Dashboard Effect: Namjera=OFF, Stream=ON -> Zaustavljam audio stream...");
                 stopStreaming();
             }
