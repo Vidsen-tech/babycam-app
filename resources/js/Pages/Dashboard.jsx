@@ -55,7 +55,7 @@ export default function Dashboard({ auth }) {
                 console.log("Dashboard Effect: Namjera=OFF, Stream=ON -> Zaustavljam audio stream...");
                 stopStreaming();
             }
-        }npm
+        }
     }, [isMonitoringActive, isAudioStreaming, startStreaming, stopStreaming]);
 
     // --- Handleri za Gumbe i Kontrole ---
