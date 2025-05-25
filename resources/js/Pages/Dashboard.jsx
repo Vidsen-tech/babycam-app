@@ -24,7 +24,7 @@ export default function Dashboard({ auth }) {
     const videoContainerRef = useRef(null);
 
     // --- Audio Streamer Hook ---
-    const PI_IP_ADDRESS = '192.168.178.62'; // Koristimo tvoju trenutnu IP adresu
+    const PI_IP_ADDRESS = '192.168.100.59'; // Koristimo tvoju trenutnu IP adresu
     const WEBSOCKET_PORT = 8765;
     const wsUrl = `ws://${PI_IP_ADDRESS}:${WEBSOCKET_PORT}`;
 
@@ -55,7 +55,7 @@ export default function Dashboard({ auth }) {
                 console.log("Dashboard Effect: Namjera=OFF, Stream=ON -> Zaustavljam audio stream...");
                 stopStreaming();
             }
-        }
+        }npm
     }, [isMonitoringActive, isAudioStreaming, startStreaming, stopStreaming]);
 
     // --- Handleri za Gumbe i Kontrole ---
